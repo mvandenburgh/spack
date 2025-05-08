@@ -2,14 +2,42 @@
 #
 # SPDX-License-Identifier: (Apache-2.0 OR MIT)
 
-from typing import Any, Dict, List, Set
 import json
-from spack.util import s3
+import pathlib
 from tempfile import TemporaryFile
+from typing import List, Optional, Set
 
 import llnl.util.tty as tty
 
+from spack.util import s3
+
 from .mirrors.mirror import Mirror
+
+
+def _direct_prune(mirror: Mirror, lockfile: str) -> None:
+    """
+    Deletes spec manifests that are not in the lockfile.
+
+    Note, this does not delete the actual blobs, just the spec manifests.
+    Deleting the manifests effectively orphans the blobs, which will result
+    in them being deleted in the following orphan pruning step.
+    """
+    s3_client = s3.get_s3_session(url=mirror.fetch_url, method="fetch")
+    paginator = s3_client.get_paginator("list_objects_v2")
+
+    s3_bucket_name = mirror.fetch_url.split("/")[2]
+
+    lockfile_json = json.loads(pathlib.Path(lockfile).read_text())
+
+    keeplist: Set[str] = set(spec_hash for spec_hash in lockfile_json["concrete_specs"].keys())
+
+    for page in paginator.paginate(Bucket=s3_bucket_name, Prefix="spack/v3/manifests/spec/"):
+        for obj in page.get("Contents", []):
+            spec_hash = obj["Key"].split("/")[-1].split(".spec.manifest.json")[0].split("-")[-1]
+            if spec_hash not in keeplist:
+                tty.debug(f"Found spec not in keeplist: {spec_hash}")
+                # s3_client.delete_object(Bucket=bucket_name, Key=obj['Key'])
+                tty.debug(f"Deleted spec manifest: {spec_hash}")
 
 
 def _get_spec_checksums(s3_client, bucket_name: str, key: str) -> List[str]:
@@ -66,5 +94,12 @@ def _prune_orphaned_specs(mirror: Mirror) -> int:
     return pruned_specs
 
 
-def prune(mirror: Mirror) -> None:
+def prune(mirror: Mirror, lockfile: Optional[str] = None) -> None:
+    tty.debug(f"Pruning mirror: {mirror.fetch_url}")
+    if lockfile is not None:
+        tty.debug(f"Using lockfile: {lockfile}")
+        _direct_prune(mirror, lockfile)
+
     orphaned_specs = _prune_orphaned_specs(mirror)
+
+    tty.debug(f"Pruned {orphaned_specs} orphaned specs from mirror: {mirror.fetch_url}")

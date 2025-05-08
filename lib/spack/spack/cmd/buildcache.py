@@ -214,6 +214,14 @@ def setup_parser(subparser: argparse.ArgumentParser):
 
     prune = subparsers.add_parser("prune", help=prune_fn.__doc__)
     prune.add_argument("mirror", type=arguments.mirror_name, help="name of a configured mirror")
+    prune.add_argument(
+        "-l",
+        "--lockfile",
+        required=False,
+        default=None,
+        help="path to the lockfile to use for pruning. If not provided, only orphaned specs "
+        "will be pruned.",
+    )
     prune.set_defaults(func=prune_fn)
 
     # Given the root spec, save the yaml of the dependent spec to a file
@@ -830,7 +838,7 @@ def prune_fn(args):
     mirror: spack.mirrors.mirror.Mirror = args.mirror
     assert isinstance(mirror, spack.mirrors.mirror.Mirror)
 
-    prune(mirror)
+    prune(mirror, args.lockfile)
 
 
 def buildcache(parser, args):
